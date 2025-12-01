@@ -1,5 +1,9 @@
 # MT5 REST API – Documentation
 
+## Contribute
+
+You may contribute to this project by actually checking the satibility of the App and send your PRs. i tried too keep the project as a kernel like and let you to have wrappers around it using the socket and rest APIs implemented (maybe adding Auth or paid subscriptions, whatever you like to do) just somewhere in your project mention this repo url.
+
 ## Overview
 
 This is a FastAPI-based RESTful service that acts as a bridge to MetaTrader 5 (MT5). It loads configuration from JSON files (`config.dev.json` or `config.live.json`), initializes a single MT5 connection (using the MetaTrader5 Python package), and exposes endpoints for managing orders and positions. The service uses a singleton MT5 manager for thread-safe operations.
