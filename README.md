@@ -392,4 +392,3 @@ No merging; full config per mode.
 - Auth errors: Check config, header.
 - Run with DEBUG log for details.
 - Shutdown: CTRL+C graceful (closes MT5).
-```
