@@ -7,7 +7,6 @@ This is a FastAPI-based RESTful service that acts as a bridge to MetaTrader 5 (M
 Key features:
 - Singleton MT5 connection for efficiency and safety.
 - Supports demo/live accounts via CLI flag (`--live`).
-- Authentication via API keys (configurable, disabled in dev).
 - Logging to daily rotated files in `./logs` and console.
 - Smart order types (e.g., "LIMIT" auto-resolves to BUY_LIMIT or SELL_LIMIT based on market prices).
 - Validation for distances (SL/TP min distances, pending order distances from market).
@@ -31,21 +30,24 @@ python src/main.py --live
 
 The server runs on host/port from config (default: 127.0.0.1:5100). Logs at INFO level by default (configurable).
 
+**Running Tests**
+After cloning, install requirements and run the full test suite:
+```bash
+pip install -r requirements.txt
+pytest -v tests
+```
+
 **Base URL**: `http://<host>:<port>` (e.g., `http://127.0.0.1:5100`).
 
 **API Versioning**: All endpoints under `/api/v1`.
 
 **Authentication**
-- Configurable via `auth.enabled` (bool) in config file.
-- If enabled, requires `X-API-Key` header matching one of `auth.api_keys` (list of strings).
-- Disabled in dev config; enabled in live with placeholder key.
-- Unauthorized requests return 401 HTTP error.
-- No JWT or advanced auth; simple key-based for now.
+No built-in authentication; developers can add it via wrappers or middleware (e.g., JWT, API keys).
 
 **Error Handling**
 - All responses include `success` (bool) and `message` (str).
 - HTTP status: 200 for success/false (to allow details inspection), 4xx/5xx for errors.
-- Common errors: 400 (validation), 401 (auth), 404 (not found), 500 (internal).
+- Common errors: 400 (validation), 404 (not found), 500 (internal).
 - Details in `details` field (dict) with MT5 error codes if applicable.
 
 Example error:
@@ -73,8 +75,6 @@ Checks service status and MT5 connection.
 
 **Query Params**: None.
 
-**Headers**: Auth if enabled.
-
 **Response** (200 OK)
 ```json
 {
@@ -93,7 +93,7 @@ curl http://127.0.0.1:5100/api/v1/health
 
 Places a market or pending order. Validates inputs, resolves smart types, and sends to MT5.
 
-**Headers**: Auth if enabled; Content-Type: application/json.
+**Headers**: Content-Type: application/json.
 
 **Body** (NewOrderRequest schema)
 - `symbol`: str (required, e.g., "EURUSD") – Trading symbol.
@@ -173,8 +173,6 @@ Retrieves all open pending orders, optionally filtered by symbol.
 **Query Params**
 - `symbol`: str (optional) – Filter by symbol (e.g., "EURUSD").
 
-**Headers**: Auth if enabled.
-
 **Response** (OrderListResponse schema, 200 OK)
 - `success`: bool.
 - `message`: str.
@@ -216,8 +214,6 @@ Retrieves all open positions, optionally filtered by symbol.
 **Query Params**
 - `symbol`: str (optional).
 
-**Headers**: Auth if enabled.
-
 **Response** (PositionListResponse schema, 200 OK)
 - `success`: bool.
 - `message`: str.
@@ -257,7 +253,7 @@ curl http://127.0.0.1:5100/api/v1/orders/getOpenPositions?symbol=GBPUSD
 
 Cancels a pending order by ticket.
 
-**Headers**: Auth if enabled; Content-Type: application/json.
+**Headers**: Content-Type: application/json.
 
 **Body** (RemoveOrderRequest schema)
 - `ticket`: int (required) – Order ticket.
@@ -285,7 +281,7 @@ Modifies a pending order. Ticket in query; updates in body.
 **Query Params**
 - `ticket`: int (required) – Order ticket.
 
-**Headers**: Auth if enabled; Content-Type: application/json.
+**Headers**: Content-Type: application/json.
 
 **Body** (UpdateOrderRequest schema)
 - `price`: float (optional).
@@ -317,7 +313,7 @@ curl -X POST http://127.0.0.1:5100/api/v1/orders/updateOrder?ticket=123456789 \
 
 Closes a position fully or partially.
 
-**Headers**: Auth if enabled; Content-Type: application/json.
+**Headers**: Content-Type: application/json.
 
 **Body** (ClosePositionRequest schema)
 - `ticket`: int (required) – Position ticket.
@@ -396,3 +392,4 @@ No merging; full config per mode.
 - Auth errors: Check config, header.
 - Run with DEBUG log for details.
 - Shutdown: CTRL+C graceful (closes MT5).
+```
