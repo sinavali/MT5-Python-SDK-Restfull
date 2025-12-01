@@ -1,49 +1,149 @@
-```markdown
 # MT5 REST API – Documentation
 
-Base URL: `http://127.0.0.1:5100`
+## Overview
 
-All endpoints are under `/api/v1`.  
-Authentication: optional API key via header `X-API-Key` (disabled in dev config, enabled in live).
+This is a FastAPI-based RESTful service that acts as a bridge to MetaTrader 5 (MT5). It loads configuration from JSON files (`config.dev.json` or `config.live.json`), initializes a single MT5 connection (using the MetaTrader5 Python package), and exposes endpoints for managing orders and positions. The service uses a singleton MT5 manager for thread-safe operations.
 
-## Health Check
+Key features:
+- Singleton MT5 connection for efficiency and safety.
+- Supports demo/live accounts via CLI flag (`--live`).
+- Authentication via API keys (configurable, disabled in dev).
+- Logging to daily rotated files in `./logs` and console.
+- Smart order types (e.g., "LIMIT" auto-resolves to BUY_LIMIT or SELL_LIMIT based on market prices).
+- Validation for distances (SL/TP min distances, pending order distances from market).
+- Graceful shutdown on SIGINT/SIGTERM.
 
+**Prerequisites**
+- Python 3.13.9 (or compatible).
+- Install dependencies: `pip install -r requirements.txt`.
+- MT5 terminal installed (path in config).
+- Valid MT5 account credentials in config files.
+- For live: Replace placeholders in `config.live.json` with real values.
+
+**Running the Service**
+```bash
+# Demo mode (uses config.dev.json, first demo account)
+python src/main.py
+
+# Live mode (uses config.live.json, live account)
+python src/main.py --live
 ```
-GET /api/v1/health
-```
 
-**Response**
+The server runs on host/port from config (default: 127.0.0.1:5100). Logs at INFO level by default (configurable).
+
+**Base URL**: `http://<host>:<port>` (e.g., `http://127.0.0.1:5100`).
+
+**API Versioning**: All endpoints under `/api/v1`.
+
+**Authentication**
+- Configurable via `auth.enabled` (bool) in config file.
+- If enabled, requires `X-API-Key` header matching one of `auth.api_keys` (list of strings).
+- Disabled in dev config; enabled in live with placeholder key.
+- Unauthorized requests return 401 HTTP error.
+- No JWT or advanced auth; simple key-based for now.
+
+**Error Handling**
+- All responses include `success` (bool) and `message` (str).
+- HTTP status: 200 for success/false (to allow details inspection), 4xx/5xx for errors.
+- Common errors: 400 (validation), 401 (auth), 404 (not found), 500 (internal).
+- Details in `details` field (dict) with MT5 error codes if applicable.
+
+Example error:
 ```json
 {
-  "status": "ok",
-  "mt5_connected": true
+  "success": false,
+  "message": "Invalid volume",
+  "details": {"mt5_last_error": "..."}
 }
 ```
 
-## Orders & Positions
+**General Notes**
+- All prices/volumes as floats; tickets as ints.
+- Symbols case-insensitive (uppercased internally).
+- MT5 must be running or initializable via path.
+- Operations are synchronous and locked for safety.
+- No rate limiting; add if needed for production.
 
-### 1. Place New Order (market or pending)
-```
-POST /api/v1/orders/newOrder
+## Endpoints
+
+### Health Check
+**GET /api/v1/health**
+
+Checks service status and MT5 connection.
+
+**Query Params**: None.
+
+**Headers**: Auth if enabled.
+
+**Response** (200 OK)
+```json
+{
+  "status": "ok",
+  "mt5_connected": true  // or false
+}
 ```
 
-**Body** (JSON)
+**cURL Example**
+```bash
+curl http://127.0.0.1:5100/api/v1/health
+```
+
+### Place New Order
+**POST /api/v1/orders/newOrder**
+
+Places a market or pending order. Validates inputs, resolves smart types, and sends to MT5.
+
+**Headers**: Auth if enabled; Content-Type: application/json.
+
+**Body** (NewOrderRequest schema)
+- `symbol`: str (required, e.g., "EURUSD") – Trading symbol.
+- `volume`: float (required, >0, e.g., 0.01) – Lot size.
+- `order_type`: str (required, see Order Types below) – Type like "BUY", "LIMIT".
+- `price`: float (optional/required for pending, e.g., 1.0850) – Entry price.
+- `stop_limit_price`: float (optional, for STOP_LIMIT types) – Trigger price.
+- `sl`: float (optional) – Stop Loss.
+- `tp`: float (optional) – Take Profit.
+- `deviation`: int (optional, default 10) – Slippage in points for market orders.
+- `comment`: str (optional) – Short client comment (truncated to 64 chars).
+- `magic`: int (optional) – Strategy identifier.
+- `client_id`: str (optional) – Client correlation ID.
+
+Validations:
+- Volume >0.
+- For pending: price required.
+- SL/TP distances >= min_stop_distance (10 points default).
+- For LIMIT: auto-resolves (see Order Types).
+- Rejects if symbol not available/selectable.
+
+**Response** (OrderResponse schema, 200 OK)
+- `success`: bool.
+- `message`: str.
+- `ticket`: int (optional) – MT5 ticket.
+- `symbol`: str.
+- `order_type`: str.
+- `price`: float (optional).
+- `volume`: float.
+- `time_placed`: datetime (optional, UTC).
+- `comment`: str (optional).
+- `details`: dict – Raw MT5 result.
+
+Example Body:
 ```json
 {
   "symbol": "EURUSD",
   "volume": 0.05,
-  "order_type": "BUY_LIMIT",           // or BUY, SELL, SELL_STOP, LIMIT, etc.
-  "price": 1.08500,                    // required for pending orders
+  "order_type": "BUY_LIMIT",
+  "price": 1.08500,
   "sl": 1.08000,
   "tp": 1.09500,
   "deviation": 10,
-  "comment": "my-strategy-v2",
-  "magic": 20241201,
-  "client_id": "abc123"
+  "comment": "strategy-v1",
+  "magic": 12345,
+  "client_id": "client-abc"
 }
 ```
 
-**Success response**
+Success Response Example:
 ```json
 {
   "success": true,
@@ -53,24 +153,78 @@ POST /api/v1/orders/newOrder
   "order_type": "BUY_LIMIT",
   "price": 1.085,
   "volume": 0.05,
-  "comment": "my-strategy-v2",
-  "details": { ...mt5 result... }
+  "comment": "strategy-v1",
+  "details": {"retcode": 10009, ...}
 }
 ```
 
-### 2. List Open Pending Orders
-```
-GET /api/v1/orders/getOpenOrders
-GET /api/v1/orders/getOpenOrders?symbol=EURUSD
-```
-
-### 3. List Open Positions
-```
-GET /api/v1/orders/getOpenPositions
-GET /api/v1/orders/getOpenPositions?symbol=GBPUSD
+**cURL Example**
+```bash
+curl -X POST http://127.0.0.1:5100/api/v1/orders/newOrder \
+  -H "Content-Type: application/json" \
+  -d '{"symbol": "EURUSD", "volume": 0.05, "order_type": "BUY_LIMIT", "price": 1.08500, "sl": 1.08000, "tp": 1.09500}'
 ```
 
-**Response example**
+### List Open Pending Orders
+**GET /api/v1/orders/getOpenOrders**
+
+Retrieves all open pending orders, optionally filtered by symbol.
+
+**Query Params**
+- `symbol`: str (optional) – Filter by symbol (e.g., "EURUSD").
+
+**Headers**: Auth if enabled.
+
+**Response** (OrderListResponse schema, 200 OK)
+- `success`: bool.
+- `message`: str.
+- `orders`: list[OrderEntry] – List of orders.
+  - Each OrderEntry: dict with `ticket` (int), `symbol` (str), `type` (str), `price` (float), `volume` (float), `sl` (float), `tp` (float), `time` (int, UNIX), `comment` (str), `raw` (dict – full MT5 data).
+
+Example Response:
+```json
+{
+  "success": true,
+  "message": "Open orders retrieved",
+  "orders": [
+    {
+      "ticket": 123456789,
+      "symbol": "EURUSD",
+      "type": "BUY_LIMIT",
+      "price": 1.08500,
+      "volume": 0.05,
+      "sl": 1.08000,
+      "tp": 1.09500,
+      "time": 1733086412,
+      "comment": "strategy-v1",
+      "raw": {...}
+    }
+  ]
+}
+```
+
+**cURL Example**
+```bash
+curl http://127.0.0.1:5100/api/v1/orders/getOpenOrders?symbol=EURUSD
+```
+
+### List Open Positions
+**GET /api/v1/orders/getOpenPositions**
+
+Retrieves all open positions, optionally filtered by symbol.
+
+**Query Params**
+- `symbol`: str (optional).
+
+**Headers**: Auth if enabled.
+
+**Response** (PositionListResponse schema, 200 OK)
+- `success`: bool.
+- `message`: str.
+- `positions`: list[PositionEntry] – List of positions.
+  - Each PositionEntry: dict with `ticket` (int), `symbol` (str), `type` (str), `volume` (float), `price_open` (float), `sl` (float), `tp` (float), `time` (int), `profit` (float), `comment` (str), `raw` (dict).
+
+Example Response:
 ```json
 {
   "success": true,
@@ -84,85 +238,161 @@ GET /api/v1/orders/getOpenPositions?symbol=GBPUSD
       "price_open": 1.08765,
       "sl": 1.08000,
       "tp": 1.09500,
+      "time": 1733086412,
       "profit": 23.45,
-      "comment": "my-strategy-v2",
-      ...
+      "comment": "strategy-v1",
+      "raw": {...}
     }
   ]
 }
 ```
 
-### 4. Cancel Pending Order
-```
-POST /api/v1/orders/removeOrder
-```
-
-**Body**
-```json
-{ "ticket": 123456789 }
-```
-
-### 5. Modify Pending Order
-```
-POST /api/v1/orders/updateOrder?ticket=123456789
-```
-
-**Body** (only fields you want to change)
-```json
-{
-  "price": 1.New price,
-  "sl": 1.08200,
-  "tp": 1.10000
-}
-```
-
-### 6. Close Position (full or partial)
-```
-POST /api/v1/orders/closePosition
-```
-
-**Body**
-```json
-{
-  "ticket": 987654321,
-  "volume": 0.03        // omit → full close
-}
-```
-
-## Order Types Accepted
-
-| Value              | Meaning                              |
-|-------------------|---------------------------------------|
-| BUY               | Market buy                            |
-| SELL              | Market sell                           |
-| BUY_LIMIT         | Buy limit below market                |
-| SELL_LIMIT        | Sell limit above market               |
-| BUY_STOP          | Buy stop above market                 |
-| SELL_STOP         | Sell stop below market                |
-| BUY_STOP_LIMIT    | Buy stop-limit                        |
-| SELL_STOP_LIMIT   | Sell stop-limit                       |
-| LIMIT             | Smart limit – server decides BUY_LIMIT based on price vs market |
-| MARKET            | Not recommended – use BUY/SELL instead|
-
-## WebSocket (not implemented yet)
-
-Planned endpoint (future):
-
-```
-wss://127.0.0.1:5100/ws/mt5
-```
-
-Will broadcast in real time:
-- New orders
-- Order modifications/cancellations
-- New trades/positions
-- Position updates & profit changes
-
-Say “add websocket” and I’ll drop the full working broadcast implementation in <2 minutes.
-
-## Run modes
-
+**cURL Example**
 ```bash
-python src/main.py          # demo account (config.dev.json)
-python src/main.py --live   # live account (config.live.json)
+curl http://127.0.0.1:5100/api/v1/orders/getOpenPositions?symbol=GBPUSD
 ```
+
+### Cancel Pending Order
+**POST /api/v1/orders/removeOrder**
+
+Cancels a pending order by ticket.
+
+**Headers**: Auth if enabled; Content-Type: application/json.
+
+**Body** (RemoveOrderRequest schema)
+- `ticket`: int (required) – Order ticket.
+
+**Response** (OrderResponse schema, 200 OK)
+- As above, without symbol/order_type/etc.
+
+Example Body:
+```json
+{"ticket": 123456789}
+```
+
+**cURL Example**
+```bash
+curl -X POST http://127.0.0.1:5100/api/v1/orders/removeOrder \
+  -H "Content-Type: application/json" \
+  -d '{"ticket": 123456789}'
+```
+
+### Modify Pending Order
+**POST /api/v1/orders/updateOrder**
+
+Modifies a pending order. Ticket in query; updates in body.
+
+**Query Params**
+- `ticket`: int (required) – Order ticket.
+
+**Headers**: Auth if enabled; Content-Type: application/json.
+
+**Body** (UpdateOrderRequest schema)
+- `price`: float (optional).
+- `sl`: float (optional).
+- `tp`: float (optional).
+- `stop_limit_price`: float (optional).
+- `volume`: float (optional).
+- `deviation`: int (optional).
+- `comment`: str (optional).
+
+Only provided fields are updated.
+
+**Response** (OrderResponse schema, 200 OK)
+
+Example Body:
+```json
+{"price": 1.08600, "sl": 1.08100}
+```
+
+**cURL Example**
+```bash
+curl -X POST http://127.0.0.1:5100/api/v1/orders/updateOrder?ticket=123456789 \
+  -H "Content-Type: application/json" \
+  -d '{"price": 1.08600, "sl": 1.08100}'
+```
+
+### Close Position
+**POST /api/v1/orders/closePosition**
+
+Closes a position fully or partially.
+
+**Headers**: Auth if enabled; Content-Type: application/json.
+
+**Body** (ClosePositionRequest schema)
+- `ticket`: int (required) – Position ticket.
+- `volume`: float (optional) – Partial volume; omit for full.
+
+Validations: Volume <= current; >0.
+
+**Response** (OrderResponse schema, 200 OK)
+
+Example Body:
+```json
+{"ticket": 987654321, "volume": 0.03}
+```
+
+**cURL Example**
+```bash
+curl -X POST http://127.0.0.1:5100/api/v1/orders/closePosition \
+  -H "Content-Type: application/json" \
+  -d '{"ticket": 987654321, "volume": 0.03}'
+```
+
+## Order Types
+
+Supported `order_type` values (case-insensitive):
+
+| Value            | Description                                                                 | Requirements                  |
+|------------------|-----------------------------------------------------------------------------|-------------------------------|
+| BUY             | Market buy at current ask.                                                  | None                          |
+| SELL            | Market sell at current bid.                                                 | None                          |
+| BUY_LIMIT       | Pending buy below market (price < bid - min_distance).                      | price                         |
+| SELL_LIMIT      | Pending sell above market (price > ask + min_distance).                     | price                         |
+| BUY_STOP        | Pending buy above market.                                                   | price                         |
+| SELL_STOP       | Pending sell below market.                                                  | price                         |
+| BUY_STOP_LIMIT  | Buy stop-limit (trigger at stop_limit_price, then limit at price).          | price, stop_limit_price       |
+| SELL_STOP_LIMIT | Sell stop-limit.                                                            | price, stop_limit_price       |
+| LIMIT           | Smart: Auto BUY_LIMIT if price below market; SELL_LIMIT if above. Rejects if too close (inside spread + min_distance=2 points). | price                         |
+| MARKET          | Not supported; use BUY/SELL instead.                                        | N/A                           |
+
+- Min distances configurable in MT5Manager (MIN_DISTANCE_POINTS=2, MIN_STOP_DISTANCE_POINTS=10).
+- Points converted to price via symbol info.
+- For market: deviation applies.
+- All use GTC expiration, RETURN/IOC filling.
+
+## WebSocket (Planned/Not Implemented)
+
+Future: `wss://<host>:<port>/ws/mt5`
+
+- Broadcast real-time events: new orders, updates, cancellations, new positions, profit changes, closes.
+- Clients subscribe with API key if auth enabled.
+- Events as JSON: {"event": "order_new", "data": {...}}.
+
+To implement: Add WebSocket router, use Broadcast for pub/sub on MT5 events (poll or hook into MT5 callbacks if possible).
+
+## Logging & Monitoring
+
+- Daily rotated logs in `./logs/YYYY-MM-DD.log` (Europe/Athens TZ).
+- Console output.
+- Level from config (`log_level`: "DEBUG", "INFO", etc.).
+- Includes timestamps, levels, modules.
+
+## Configuration Details
+
+- `accounts`: dict with `live` (dict: login, password, server) and `demo` (list of dicts).
+- `mt5.path`: str – Terminal executable.
+- `server`: dict with `host`, `port`.
+- `log_level`: str.
+- `auth`: dict with `enabled` (bool), `api_keys` (list[str]).
+
+No merging; full config per mode.
+
+## Troubleshooting
+
+- MT5 init fails: Check path, credentials, MT5 running.
+- Symbol not found: Ensure selected in MT5.
+- Connection issues: Increase timeout in init.
+- Auth errors: Check config, header.
+- Run with DEBUG log for details.
+- Shutdown: CTRL+C graceful (closes MT5).
