@@ -62,7 +62,7 @@ class ClosePositionRequest(BaseModel):
 class OrderEntry(BaseModel):
     ticket: Optional[int]
     symbol: Optional[str]
-    type: Optional[str]
+    type: Optional[int]  # change to int
     price: Optional[float]
     volume: Optional[float]
     sl: Optional[float]
@@ -75,7 +75,7 @@ class OrderEntry(BaseModel):
 class PositionEntry(BaseModel):
     ticket: Optional[int]
     symbol: Optional[str]
-    type: Optional[str]
+    type: Optional[int]  # change to int
     volume: Optional[float]
     price_open: Optional[float]
     sl: Optional[float]
