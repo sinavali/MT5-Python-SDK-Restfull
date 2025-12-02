@@ -7,10 +7,13 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, validator, ConfigDict, field_validator, Field
 
 from src.services.mt5_service import mt5_manager
-from src.config import load_config
+from src.config import load_config, detect_live_flag
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+_cfg = load_config(use_live=detect_live_flag())  # Or pass live flag if needed
+WS_INTERVAL = _cfg.get("ws", {}).get("interval_seconds", 5)
 
 # --- MT5 Constants & Helpers ---
 TF_MAP = {
@@ -187,7 +190,7 @@ async def candle_watcher():
 
     while True:
         if not mt5_manager._initialized:
-            await asyncio.sleep(1)
+            await asyncio.sleep(WS_INTERVAL)
             continue
 
         # Iterate over a copy of keys to avoid runtime error if client disconnects mid-loop
@@ -261,7 +264,7 @@ async def candle_watcher():
                 # but we can force clean up here if we want
                 pass
 
-        await asyncio.sleep(1)  # 1 second interval
+        await asyncio.sleep(WS_INTERVAL)  # 1 second interval
 
 
 # --- Routes ---
