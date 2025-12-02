@@ -29,6 +29,7 @@ class MT5Manager:
         self._lock = threading.RLock()
         self._initialized = False
         self._account_cfg: Optional[Dict[str, Any]] = None
+        self.mt5 = mt5
 
     @classmethod
     def instance(cls) -> "MT5Manager":

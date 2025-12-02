@@ -9,10 +9,13 @@ import signal
 import sys
 from fastapi import FastAPI
 import uvicorn
+import asyncio
 
 from src.config import load_config, detect_live_flag
 from src.logging_setup import setup_logging
 from src.services.mt5_service import mt5_manager
+from src.routers import ws
+from src.routers.ws import candle_watcher
 
 
 logger = logging.getLogger(__name__)
@@ -76,6 +79,11 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, _signal_handler)
 
     app = build_app(cfg)
+    app.include_router(ws.router)
+
+    @app.on_event("startup")
+    async def start_candle_task():
+        asyncio.create_task(candle_watcher())
 
     host = cfg.get("server", {}).get("host", "127.0.0.1")
     port = int(cfg.get("server", {}).get("port", 5100))
