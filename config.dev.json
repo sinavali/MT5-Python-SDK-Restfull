@@ -16,9 +16,6 @@
   "mt5": {
     "path": "C:/Program Files/MetaTrader 5/terminal64.exe"
   },
-  "timeframe_priority": [
-    "W1", "D1", "H12", "H8", "H6", "H4", "H3", "H2", "H1", "M30", "M20", "M15", "M12", "M10", "M6", "M5", "M4", "M3", "M2", "M1"
-  ],
   "server": {
     "host": "127.0.0.1",
     "port": 5100
