@@ -9,12 +9,15 @@ You may contribute to this project by actually checking the satibility of the Ap
 This is a FastAPI-based RESTful service that acts as a bridge to MetaTrader 5 (MT5). It loads configuration from JSON files (`config.dev.json` or `config.live.json`), initializes a single MT5 connection (using the MetaTrader5 Python package), and exposes endpoints for managing orders and positions. The service uses a singleton MT5 manager for thread-safe operations.
 
 Key features:
-- Singleton MT5 connection for efficiency and safety.
-- Supports demo/live accounts via CLI flag (`--live`).
-- Logging to daily rotated files in `./logs` and console.
-- Smart order types (e.g., "LIMIT" auto-resolves to BUY_LIMIT or SELL_LIMIT based on market prices).
-- Validation for distances (SL/TP min distances, pending order distances from market).
-- Graceful shutdown on SIGINT/SIGTERM.
+
+* Singleton MT5 connection for efficiency and safety.
+* Supports demo/live accounts via CLI flag (`--live`).
+* Logging to daily rotated files in `./logs` and console.
+* Smart order types (e.g., "LIMIT" auto-resolves to BUY_LIMIT or SELL_LIMIT based on market prices).
+* Validation for distances (SL/TP min distances, pending order distances from market).
+* Graceful shutdown on SIGINT/SIGTERM.
+* Real-time WebSocket streaming closed-candle data (multi-timeframe).
+
 
 **Prerequisites**
 - Python 3.13.9 (or compatible).
@@ -361,15 +364,146 @@ Supported `order_type` values (case-insensitive):
 - For market: deviation applies.
 - All use GTC expiration, RETURN/IOC filling.
 
-## WebSocket (Planned/Not Implemented)
+# WebSocket Streaming
 
-Future: `wss://<host>:<port>/ws/mt5`
+The service includes a real-time WebSocket endpoint that streams MT5 market data based on per-client subscription models.
+Each client can subscribe to multiple symbols, optionally including:
 
-- Broadcast real-time events: new orders, updates, cancellations, new positions, profit changes, closes.
-- Clients subscribe with API key if auth enabled.
-- Events as JSON: {"event": "order_new", "data": {...}}.
+* Live bid/ask ticks.
+* One or more timeframes.
+* A configurable count of candles per timeframe.
+* A per-timeframe `always_send` flag to receive updates every second even if no new candle closed.
 
-To implement: Add WebSocket router, use Broadcast for pub/sub on MT5 events (poll or hook into MT5 callbacks if possible).
+**Endpoint**
+
+```
+ws://<host>:<port>/ws
+```
+
+## Subscription Format
+
+Send a JSON message after connecting. The server accepts two formats:
+
+### 1. Direct subscription list (recommended)
+
+```json
+[
+  {
+    "symbol": "EURUSD",
+    "live": true,
+    "timeframes": [
+      ["m1", 2, false],
+      ["h1", 1, true]
+    ]
+  },
+  {
+    "symbol": "GBPUSD",
+    "live": false,
+    "timeframes": [
+      ["m5", 10, false]
+    ]
+  }
+]
+```
+
+### 2. Action-based (optional)
+
+```json
+{
+  "action": "subscribe",
+  "data": [
+    { "symbol": "EURUSD", "live": true, "timeframes": [["m1",1,true]] }
+  ]
+}
+```
+
+Both forms produce the same result.
+
+### Timeframe Format
+
+Each timeframe entry is a 3-element array:
+
+```
+["M1", count, always_send]
+```
+
+* `M1`, `H1`, `D1` etc.
+* `count` = number of closed candles to retrieve every time data updates.
+* `always_send`:
+
+  * true → send candles every second regardless of new candle.
+  * false → send only when a new candle timestamp appears.
+
+### Available Timeframes
+
+```
+M1, M2, M3, M4, M5, M6, M10, M12,
+M15, M20, M30,
+H1, H2, H3, H4, H6, H8, H12,
+D1, W1, MN1
+```
+
+## What You Receive
+
+The server pushes a list of symbol payloads every second:
+
+Example push:
+
+```json
+[
+  {
+    "symbol": "EURUSD",
+    "live": { "ask": 1.08654, "bid": 1.08643 },
+    "timeframes": {
+      "m1": [
+        {
+          "time": 1733086400,
+          "open": 1.08610,
+          "high": 1.08680,
+          "low": 1.08600,
+          "close": 1.08650,
+          "tick_volume": 123
+        }
+      ],
+      "h1": []
+    }
+  }
+]
+```
+
+Notes:
+
+* Timeframe keys are always lowercase (`"m1"`, `"h1"`).
+* If no new candle is available and `always_send` is false, the timeframe will be an empty list.
+* If MT5 is not connected or symbol not available, lists return empty.
+* Live prices return `ask`/`bid` or `null` if market is closed.
+
+## Server-side Behavior
+
+* A global `candle_watcher()` runs every 1 second.
+* For each connected client:
+
+  * The subscription model is validated and stored.
+  * Each symbol/timeframe pair has its own last-sent timestamp to avoid resending duplicate candles.
+  * Live ticks are fetched only if requested (`live: true`).
+* Disconnected clients are automatically cleaned up.
+
+## Example Client (JavaScript)
+
+```js
+const ws = new WebSocket("ws://127.0.0.1:5100/ws");
+
+ws.onopen = () => {
+  ws.send(JSON.stringify([
+    { symbol: "EURUSD", live: true, timeframes: [["m1", 2, false]] }
+  ]));
+};
+
+ws.onmessage = (ev) => {
+  const data = JSON.parse(ev.data);
+  console.log("Incoming:", data);
+};
+```
 
 ## Logging & Monitoring
 
@@ -396,3 +530,6 @@ No merging; full config per mode.
 - Auth errors: Check config, header.
 - Run with DEBUG log for details.
 - Shutdown: CTRL+C graceful (closes MT5).
+- WebSocket returns empty lists: Symbol not available or market closed.
+- If you receive `{"error":"Invalid JSON"}`, check the payload formatting.
+- If nothing is received: ensure subscription was accepted (`{"status":"subscribed"}`).
