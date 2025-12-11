@@ -5,6 +5,12 @@
 You may contribute to this project by checking the **stability** of the app and sending PRs.
 This project is designed as a core system; you can build wrappers around it using the REST and WebSocket APIs implemented (e.g., adding authentication, rate limiting, or paid subscriptions). Please reference this repository URL somewhere in your project if you use it.
 
+
+## Support? (anything is appreciated)
+ETH: ```0xee397779087244e0e2bc5cfb083f40ea0bb74f9e```
+BTC: ```bc1quxmrn9wjh6k2r5wzj6wylnuedugnp325myznck```
+SOL: ```DtotcL6XRgqF4h6UigeHGSQ7nMViAM9VEbCYnPx1183c```
+BNB: ```0xee397779087244e0e2bc5cfb083f40ea0bb74f9e```
 ---
 
 ## Overview
